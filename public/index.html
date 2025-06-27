@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Bulk Messaging - Enhanced</title>
+    <title>WhatsApp Bulk Messaging - Fixed</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
         * {
@@ -72,9 +72,9 @@
         }
 
         .status-qr-ready {
-            background: #e8f5e8;
-            color: #2e7d32;
-            border: 1px solid #c8e6c9;
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #bbdefb;
         }
 
         .status-connected {
@@ -342,8 +342,8 @@
                     <p>4. Scan the QR code above</p>
                 </div>
 
-                <button id="retry-button" class="retry-button" onclick="connectToWhatsApp()">
-                    🔄 Retry Connection
+                <button id="retry-button" class="retry-button" onclick="requestNewQR()">
+                    🔄 Get QR Code
                 </button>
             </div>
 
@@ -382,18 +382,17 @@
         <div id="message-container"></div>
 
         <div class="connection-details">
-            <div><strong>Status:</strong> <span id="socket-status">Initializing...</span></div>
-            <div><strong>Connected Clients:</strong> <span id="client-count">0</span></div>
-            <div><strong>Connection Attempts:</strong> <span id="connection-attempts">0</span></div>
+            <div><strong>Socket Status:</strong> <span id="socket-status">Initializing...</span></div>
+            <div><strong>WhatsApp Status:</strong> <span id="whatsapp-status">Disconnected</span></div>
+            <div><strong>Connection:</strong> <span id="connection-status">Not Connected</span></div>
             <div><strong>Last Update:</strong> <span id="last-update">Never</span></div>
         </div>
     </div>
 
     <script>
         let socket = null;
-        let connectionAttempts = 0;
-        let isConnecting = false;
         let isWhatsAppConnected = false;
+        let currentStatus = 'disconnected';
 
         // DOM elements
         const statusElement = document.getElementById('status');
@@ -402,9 +401,9 @@
         const retryButton = document.getElementById('retry-button');
         const messageContainer = document.getElementById('message-container');
         const socketStatusElement = document.getElementById('socket-status');
-        const connectionAttemptsElement = document.getElementById('connection-attempts');
+        const whatsappStatusElement = document.getElementById('whatsapp-status');
+        const connectionStatusElement = document.getElementById('connection-status');
         const lastUpdateElement = document.getElementById('last-update');
-        const clientCountElement = document.getElementById('client-count');
         
         // Messaging elements
         const phoneNumbersInput = document.getElementById('phone-numbers');
@@ -420,7 +419,17 @@
             statusElement.className = `status-indicator status-${status}`;
             statusElement.innerHTML = message;
             socketStatusElement.textContent = status;
+            whatsappStatusElement.textContent = currentStatus;
             lastUpdateElement.textContent = new Date().toLocaleTimeString();
+            
+            // Update connection status
+            if (isWhatsAppConnected) {
+                connectionStatusElement.textContent = 'WhatsApp Connected';
+                connectionStatusElement.style.color = '#2e7d32';
+            } else {
+                connectionStatusElement.textContent = 'Not Connected';
+                connectionStatusElement.style.color = '#d32f2f';
+            }
         }
 
         function showMessage(message, type = 'info') {
@@ -443,6 +452,7 @@
 
         function showQRCode(qrData) {
             try {
+                console.log('📱 QR Code received, displaying...');
                 qrCode.src = qrData;
                 qrCode.style.display = 'block';
                 qrPlaceholder.style.display = 'none';
@@ -450,6 +460,7 @@
                 
                 showMessage('✅ QR Code received! Please scan with your WhatsApp app.', 'success');
                 updateStatus('qr-ready', '📱 QR Code Ready - Scan with WhatsApp');
+                currentStatus = 'qr-ready';
                 
                 setTimeout(() => {
                     qrCode.classList.remove('pulse');
@@ -482,27 +493,37 @@
             isWhatsAppConnected = false;
         }
 
-        function connectToWhatsApp() {
-            if (isConnecting) {
-                console.log('Already connecting, please wait...');
-                return;
-            }
-
-            isConnecting = true;
-            connectionAttempts++;
-            connectionAttemptsElement.textContent = connectionAttempts;
-            
+        function requestNewQR() {
+            console.log('🔄 Requesting new QR code...');
             clearMessages();
             retryButton.disabled = true;
-            retryButton.innerHTML = '<div class="loading-spinner"></div> Connecting...';
+            retryButton.innerHTML = '<div class="loading-spinner"></div> Requesting...';
+            
+            hideQRCode();
+            qrPlaceholder.innerHTML = '<div><div class="loading-spinner"></div>Requesting QR Code...</div>';
+            
+            if (socket && socket.connected) {
+                socket.emit('request-qr');
+            } else {
+                connectToWhatsApp();
+            }
+            
+            setTimeout(() => {
+                retryButton.disabled = false;
+                retryButton.innerHTML = '🔄 Get QR Code';
+            }, 3000);
+        }
+
+        function connectToWhatsApp() {
+            console.log('🚀 Connecting to WhatsApp server...');
+            
+            clearMessages();
+            updateStatus('connecting', '🟡 Connecting...');
             
             if (socket) {
                 socket.disconnect();
                 socket = null;
             }
-
-            hideQRCode();
-            updateStatus('connecting', '🟡 Connecting...');
 
             const serverUrl = window.location.origin;
             console.log(`Attempting connection to: ${serverUrl}`);
@@ -512,7 +533,7 @@
                 timeout: 20000,
                 forceNew: true,
                 reconnection: true,
-                reconnectionAttempts: 3,
+                reconnectionAttempts: 5,
                 reconnectionDelay: 2000
             });
 
@@ -522,12 +543,10 @@
         function setupSocketHandlers() {
             socket.on('connect', () => {
                 console.log('✅ Connected to server successfully!');
-                isConnecting = false;
-                updateStatus('connected', '🟢 Connected - Waiting for QR Code');
-                showMessage('✅ Connected to server! Waiting for QR code...', 'success');
-                retryButton.disabled = false;
-                retryButton.innerHTML = '🔄 Reconnect';
+                updateStatus('connected', '🟢 Connected - Waiting for WhatsApp');
+                showMessage('✅ Connected to server! Requesting QR code...', 'success');
                 
+                // Automatically request QR code on connection
                 socket.emit('request-qr');
             });
 
@@ -536,8 +555,31 @@
                 showQRCode(data);
             });
 
+            socket.on('status-update', (data) => {
+                console.log('📊 Status update received:', data);
+                currentStatus = data.status;
+                isWhatsAppConnected = data.isConnected;
+                
+                if (data.hasQR && data.qrCode) {
+                    showQRCode(data.qrCode);
+                } else if (data.isConnected) {
+                    hideQRCode();
+                    enableMessaging();
+                    updateStatus('connected', '✅ WhatsApp Connected');
+                } else {
+                    disableMessaging();
+                    if (data.status === 'qr-ready') {
+                        updateStatus('qr-ready', '📱 QR Code Ready - Scan with WhatsApp');
+                    } else {
+                        updateStatus('disconnected', '🔴 WhatsApp Disconnected');
+                    }
+                }
+            });
+
             socket.on('whatsapp-ready', () => {
                 console.log('✅ WhatsApp connected successfully!');
+                currentStatus = 'connected';
+                isWhatsAppConnected = true;
                 updateStatus('connected', '✅ WhatsApp Connected');
                 hideQRCode();
                 enableMessaging();
@@ -546,6 +588,8 @@
 
             socket.on('whatsapp-disconnected', () => {
                 console.log('❌ WhatsApp disconnected');
+                currentStatus = 'disconnected';
+                isWhatsAppConnected = false;
                 updateStatus('disconnected', '🔴 WhatsApp Disconnected');
                 hideQRCode();
                 disableMessaging();
@@ -554,21 +598,15 @@
 
             socket.on('disconnect', (reason) => {
                 console.log('❌ Disconnected from server:', reason);
-                isConnecting = false;
                 updateStatus('disconnected', '🔴 Disconnected');
                 hideQRCode();
                 disableMessaging();
                 showMessage(`❌ Disconnected: ${reason}`, 'error');
-                retryButton.disabled = false;
-                retryButton.innerHTML = '🔄 Retry Connection';
             });
 
             socket.on('connect_error', (error) => {
                 console.error('❌ Connection error:', error);
-                isConnecting = false;
                 showMessage(`❌ Connection error: ${error.message}`, 'error');
-                retryButton.disabled = false;
-                retryButton.innerHTML = '🔄 Retry Connection';
             });
 
             socket.on('error', (error) => {
@@ -579,19 +617,13 @@
             socket.on('whatsapp-auth-failure', () => {
                 console.log('❌ WhatsApp authentication failed');
                 showMessage('❌ WhatsApp authentication failed. Please try scanning the QR code again.', 'error');
+                currentStatus = 'auth-failure';
                 updateStatus('disconnected', '🔴 Auth Failed');
             });
 
             socket.on('whatsapp-loading-screen', (data) => {
                 console.log(`📱 WhatsApp loading: ${data.percent}%`);
                 updateStatus('connecting', `🟡 Loading WhatsApp: ${data.percent}%`);
-            });
-
-            socket.on('status-update', (data) => {
-                clientCountElement.textContent = data.connectedClients || 0;
-                if (data.hasQR && !qrCode.src) {
-                    socket.emit('request-qr');
-                }
             });
 
             // Bulk messaging events
@@ -677,7 +709,7 @@
         setInterval(() => {
             if (socket && socket.connected) {
                 socket.emit('ping');
-            } else if (!isConnecting) {
+            } else {
                 console.log('🔍 Connection check: Socket disconnected, attempting reconnection...');
                 connectToWhatsApp();
             }
